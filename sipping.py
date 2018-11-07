@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/local/bin/python3.6
 # -*- coding: UTF-8 -*-
 # -*- Mode: Python -*-
 #
@@ -12,7 +12,7 @@ import time
 import sys
 import optparse
 import select
-import cStringIO
+import io
 import re
 
 from string import Template
@@ -115,7 +115,7 @@ class Message:
                 setattr(self, k, v)
 
     def unpack(self, buf):
-        f = cStringIO.StringIO(buf)
+        f = io.StringIO(buf)
         # Parse headers
         self.headers = parse_headers(f)
         # Parse body
@@ -124,7 +124,7 @@ class Message:
         self.data = f.read()
 
     def pack_hdr(self):
-        return ''.join(['%s: %s\r\n' % (canon_header(k), v) for k, v in self.headers.iteritems()])
+        return ''.join(['%s: %s\r\n' % (canon_header(k), v) for k, v in self.headers.items()])
 
     def __len__(self):
         return len(str(self))
@@ -149,7 +149,7 @@ class Request(Message):
         __proto = 'SIP'
 
         def unpack(self, buf):
-            f = cStringIO.StringIO(buf)
+            f = io.StringIO(buf)
             line = f.readline()
             l = line.strip().split()
             if len(l) != 3 or l[0] not in self.__methods or not l[2].startswith(self.__proto):
@@ -176,7 +176,7 @@ class Response(Message):
     __proto = 'SIP'
 
     def unpack(self, buf):
-        f = cStringIO.StringIO(buf)
+        f = io.StringIO(buf.decode())
         line = f.readline()
         l = line.strip().split(None, 2)
         if len(l) < 2 or not l[0].startswith(self.__proto) or not l[1].isdigit():
@@ -197,10 +197,10 @@ def render_template(template, template_vars):
             template_vars[k[1:]] = eval(template_vars[k])
     try:
         ret = template % template_vars
-    except KeyError, e:
+    except KeyError as e:
         sys.stderr.write("ERROR: missing template variable. %s\n" % e)
         sys.exit(-1)
-    except Exception, e:
+    except Exception as e:
         sys.stderr.write("ERROR: error in template processing. %s\n" % e)
         sys.exit(-1)
     return ret
@@ -208,7 +208,7 @@ def render_template(template, template_vars):
 
 def gen_request(template_vars, options):
 
-        for i in xrange(options.count):
+        for i in range(options.count):
             template_vars["seq"] = i
             for k in template_vars.keys():
                 if k.startswith("."):
@@ -222,12 +222,12 @@ def gen_request(template_vars, options):
                     file_request = f.read()
                     f.close()
                     request = render_template(file_request, template_vars)
-                except Exception, e:
+                except Exception as e:
                     sys.stderr.write("ERROR: cannot open file %s. %s\n" % (options.request_template, e))
                     sys.exit(-1)
         try:
             req = Request(request)
-        except SipUnpackError, e:
+        except SipUnpackError as e:
             sys.stderr.write("ERROR: malformed SIP Request. %s\n" % e)
             sys.exit(-1)
 
@@ -240,7 +240,7 @@ def open_sock(options):
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
             sock.setblocking(0)
-        except Exception, e:
+        except Exception as e:
             sys.stderr.write("ERROR: cannot create socket. %s\n" % e)
             sys.exit(-1)
         try:
@@ -262,7 +262,7 @@ def print_reply(buf, template_vars=None, out_regex=None, out_replace=None, err=N
 
     try:
         resp = Response(buf[0])
-    except SipUnpackError, e:
+    except SipUnpackError as e:
         resp = Request(buf[0])
 
     if resp.__class__.__name__ == "Response":
@@ -287,8 +287,8 @@ def print_reply(buf, template_vars=None, out_regex=None, out_replace=None, err=N
             out = re.sub(out_regex, out_replace, "%s" % resp)
             # replaced_out = CustomTemplate(out).safe_substitute(template_vars)
             replaced_out = out % template_vars
-            print replaced_out
-        except Exception, e:
+            print(replaced_out)
+        except Exception as e:
             sys.stderr.write("ERROR: an issue is occoured applying regex substitution:\n")
             sys.stderr.write("\t-----------------------------------\n")
             sys.stderr.write("\t%s\n" % e)
@@ -310,7 +310,7 @@ def print_reply(buf, template_vars=None, out_regex=None, out_replace=None, err=N
 def main():
         usage = """%prog [OPTIONS]"""
         opt = optparse.OptionParser(usage=usage)
-        opt.add_option('-c', dest='count', type='int', default=sys.maxint,
+        opt.add_option('-c', dest='count', type='int', default=3,
            help='Total number of queries to send')
         opt.add_option('-i', dest='wait', type='float', default=1,
            help='Specify packet send interval time in seconds')
@@ -384,7 +384,7 @@ def main():
 
         try:
             sock = open_sock(options)
-        except Exception, e:
+        except Exception as e:
             sys.stderr.write("ERROR: cannot open socket. %s\n" % e)
             sys.exit(-1)
 
@@ -393,32 +393,34 @@ def main():
         try:
             for req in gen_request(template_vars, options):
                 try:
-                    sip_req = Request(req)
-                    # Add Content-Lenght if missing
-                    if "content-length" not in sip_req.headers:
-                        sip_req.headers["content-length"] = len(sip_req.body)
+                    for i in range(options.count):
+                        sip_req = Request(req)
+                        # Add Content-Lenght if missing
+                        if "content-length" not in sip_req.headers:
+                            sip_req.headers["content-length"] = len(sip_req.body)
 
-                    try:
-                        sock.sendto(str(sip_req), (options.dest_ip, options.dest_port))
-                    except Exception, e:
-                        sys.stderr.write("ERROR: cannot send packet to %s:%d. %s\n" % (options.dest_ip, options.dest_port, e))
-                    if not options.quiet:
-                        sys.stderr.write("sent Request %s to %s:%d cseq=%s len=%d\n" % (sip_req.method, options.dest_ip, options.dest_port, sip_req.headers['cseq'].split()[0], len(str(sip_req))))
-                        if options.verbose:
-                            sys.stderr.write("\n=== Full Request sent ===\n\n")
-                            sys.stderr.write("%s\n" % sip_req)
-                    sent += 1
+                        try:
+                            sock.sendto(str(sip_req).encode(), (options.dest_ip, options.dest_port))
+                        except Exception as e:
+                            sys.stderr.write("ERROR: cannot send packet to %s:%d. %s\n" % (options.dest_ip, options.dest_port, e))
+                        if not options.quiet:
+                            sys.stderr.write("sent Request %s to %s:%d cseq=%s len=%d\n" % (sip_req.method, options.dest_ip, options.dest_port, sip_req.headers['cseq'].split()[0], len(str(sip_req))))
+                            if options.verbose:
+                                sys.stderr.write("\n=== Full Request sent ===\n\n")
+                                sys.stderr.write("%s\n" % sip_req)
+                        sent += 1
+                        #time.sleep(options.wait)
 
-                    if not options.aggressive:
-                        read = [sock]
-                        inputready, outputready, exceptready = select.select(read, [], [], options.timeout)
-                        for s in inputready:
-                            if s == sock:
-                                buf = None
-                                buf = sock.recvfrom(0xffff)
-                                print_reply(buf, template_vars, options.out_regex, options.out_replace, verbose=options.verbose, quiet=options.quiet)
-                                rcvd += 1
-
+                        if not options.aggressive:
+                            read = [sock]
+                            inputready, outputready, exceptready = select.select(read, [], [], options.timeout)
+                            for s in inputready:
+                                if s == sock:
+                                    buf = None
+                                    buf = sock.recvfrom(0xffff)
+                                    print_reply(buf, template_vars, options.out_regex, options.out_replace, verbose=options.verbose, quiet=options.quiet)
+                                    rcvd += 1
+                        time.sleep(options.wait)
                 except socket.timeout:
                     pass
                 time.sleep(options.wait)
